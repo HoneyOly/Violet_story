@@ -335,59 +335,47 @@ const vel = new THREE.Vector2();
    лежит строго внутри рамки и не заходит на подпись. Пиксели → мировые координаты плоскости z=0
    (камера смотрит в начало координат). Подгонка вручную: SHELF_FILL — доля свободной области,
    которую занимает книга; SHELF_NUDGE_PX — сдвиг по Y в пикселях (+ вниз). */
-  const SHELF_FILL = 0.78, SHELF_NUDGE_PX = 0;
-  function layout() {
-    renderer.setSize(innerWidth, innerHeight, false);
-    camera.aspect = innerWidth / innerHeight; 
-    camera.updateProjectionMatrix(); 
-    camera.updateMatrixWorld();
-    const visH = 2 * camera.position.z * Math.tan(camera.fov * Math.PI / 360), 
-          visW = visH * camera.aspect, 
-          ppu = visH / innerHeight;
-    books.forEach((b, k) => {
-      const r = slotEls[k].getBoundingClientRect();
-      const labelH = slotEls[k].firstElementChild.getBoundingClientRect().height + 4; // подпись + небольшой зазор
-      const top = r.top, bottom = r.bottom - labelH, availH = Math.max(10, bottom - top);
-      // Вычисляем центр доступной для книги зоны в пикселях относительно окна
-      const cxPx = r.left + r.width / 2;
-      const cyPx = top + availH / 2 + SHELF_NUDGE_PX;
-      // Переводим пиксели в координаты Three.js с правильной инверсией оси Y (центр экрана - центр элемента)
-      const pos = new THREE.Vector3(
-        (cxPx - innerWidth / 2) * ppu, 
-        (innerHeight / 2 - cyPx) * ppu, 
-        0
-      );
-      const s = Math.min(availH * SHELF_FILL, r.width * .8 * H / 2.1) * ppu / H; // масштаб по высоте/ширине рамки
-      b.userData.shelf = { pos, s };
-      if (b.userData.state === 'shelf') { 
-        b.position.copy(pos); 
-        b.scale.setScalar(s); 
-      }
-    });
-    const panel = shelfEl.getBoundingClientRect().width * ppu, 
-          free = visW - panel * 1.1;  
-    S.closedScale = Math.min(visH * .6 / H, free * .62 / 2.2);
-    S.readScale = Math.min(visH * .66 / H, free * .9 / (2 * W));
-    S.cx = -panel / 2;
-    const cur = S.cur; 
-    if (cur && cur.userData.state === 'center') { 
-      cur.position.x = S.cx; 
-      cur.scale.setScalar(S.closedScale); 
-    }
-  }
-  for (let n = 1; n <= BOOK_COUNT; n++) { 
-    const b = buildBook(n); 
-    b.quaternion.copy(shelfQ); 
-    scene.add(b); 
-    books.push(b); 
-  }
-  layout();
-  addEventListener('resize', layout); 
-  addEventListener('load', layout);
-  new ResizeObserver(layout).observe(shelfEl);
-  if (document.fonts) {
-    document.fonts.ready.then(layout);
-  }
+const SHELF_FILL = 0.78, SHELF_NUDGE_PX = 0;
+let layoutSig = '';
+/* «Подпись» геометрии: если хоть что-то из этого изменилось (шрифты, видео-фон, панель браузера,
+   масштаб, дозагрузка страницы) — книги пересчитываются. Проверяется каждый кадр, поэтому
+   книги больше не «уезжают» через несколько секунд после загрузки. */
+function layoutSignature() {
+  const c = canvas.getBoundingClientRect(), s = shelfEl.getBoundingClientRect(), a = slotEls[0].getBoundingClientRect(), z = slotEls[BOOK_COUNT - 1].getBoundingClientRect();
+  return [c.left, c.top, c.width, c.height, s.left, s.top, s.width, s.height, a.top, a.height, z.top, z.height, devicePixelRatio]
+    .map(n => Math.round(n * 10)).join('|');
+}
+function layout() {
+  /* Единая система координат: размеры берём у САМОГО canvas (его CSS-прямоугольник на экране).
+     Тогда пиксель экрана ↔ точка сцены совпадают при любом размере окна, масштабе и смещении. */
+  const cr = canvas.getBoundingClientRect(), cw = Math.max(1, Math.round(cr.width)), ch = Math.max(1, Math.round(cr.height));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(cw, ch, false);
+  camera.aspect = cw / ch; camera.updateProjectionMatrix(); camera.updateMatrixWorld();
+  const visH = 2 * camera.position.z * Math.tan(camera.fov * Math.PI / 360), visW = visH * camera.aspect, ppu = visH / ch;
+  books.forEach((b, k) => {
+    const r = slotEls[k].getBoundingClientRect();
+    const labelH = slotEls[k].firstElementChild.getBoundingClientRect().height + 4;    // подпись + небольшой зазор
+    const top = r.top, bottom = r.bottom - labelH, availH = Math.max(10, bottom - top);
+    const cxPx = r.left + r.width / 2, cyPx = top + availH / 2 + SHELF_NUDGE_PX;       // центр свободной зоны слота (px окна)
+    const pos = new THREE.Vector3((cxPx - cr.left - cw / 2) * ppu, -(cyPx - cr.top - ch / 2) * ppu, 0);
+    const s = Math.min(availH * SHELF_FILL, r.width * .8 * H / 2.1) * ppu / H;       // масштаб по высоте/ширине рамки
+    b.userData.shelf = { pos, s };
+    if (b.userData.state === 'shelf') { b.position.copy(pos); b.scale.setScalar(s); }
+  });
+  const panel = shelfEl.getBoundingClientRect().width * ppu, free = visW - panel * 1.1;
+  S.closedScale = Math.min(visH * .6 / H, free * .62 / 2.2);
+  S.readScale = Math.min(visH * .66 / H, free * .9 / (2 * W));
+  S.cx = -panel / 2;
+  layoutSig = layoutSignature();
+  const cur = S.cur; if (cur && cur.userData.state === 'center') { cur.position.x = S.cx; cur.scale.setScalar(S.closedScale); }
+}
+for (let n = 1; n <= BOOK_COUNT; n++) { const b = buildBook(n); b.quaternion.copy(shelfQ); scene.add(b); books.push(b); }
+layout();
+addEventListener('resize', layout); addEventListener('load', layout);
+if (window.visualViewport) visualViewport.addEventListener('resize', layout);
+const ro = new ResizeObserver(layout); ro.observe(shelfEl); ro.observe(canvas);
+if (document.fonts) document.fonts.ready.then(layout);
 
 /* ---------- UI ---------- */
 const $ = id => document.getElementById(id), hint = $('hint');
@@ -506,6 +494,7 @@ canvas.addEventListener('pointerup', e => {
 });
 (function loop() {
   requestAnimationFrame(loop);
+  if (layoutSignature() !== layoutSig) layout();     // страховка: любые поздние изменения вёрстки → пересчёт позиций
   if (!drag && S.cur && S.cur.userData.state === 'center' && vel.lengthSq() > 1e-8) { rotateBy(vel.x, vel.y); vel.multiplyScalar(.94); }
   renderer.render(scene, camera);
 })();
