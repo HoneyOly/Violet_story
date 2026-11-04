@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Книга</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital@0;1&family=MedievalSharp&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css"></head>
+<body>
+<div class="toolbar"><button id="tocBtn">☰ Оглавление</button><button id="sndBtn">♪ Лес: выкл</button></div>
+<nav id="toc" hidden></nav>
+<main class="stage">
+<button class="arrow" id="prev" aria-label="Назад">‹</button>
+<div class="scene"><div class="fly"><div class="shift closed" id="shift">
+ <div class="floor"></div>
+ <div class="book" id="book">
+  <div class="stack sL" id="sL"></div><div class="stack sR" id="sR"></div>
+  <div class="half left" id="L"></div><div class="half right" id="R"></div>
+  <div class="leaf fwd" id="cover"><div class="face cv"><div class="orn"><h1 id="ttl">Книга</h1><span>❖</span><p>Нажмите, чтобы открыть</p></div></div><div class="face back inner"></div></div>
+ </div></div></div></div>
+<button class="arrow" id="next" aria-label="Вперёд">›</button>
+</main>
+<script src="js/app.js"></script></body></html>
