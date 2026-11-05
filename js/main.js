@@ -15,7 +15,10 @@ const SEG = 28, BEND = 0.85;          // сегменты и сила изгиб
 const PW = 512, PH = 706;             // размер текстуры страницы (px)
 const MARGIN = 58, TEXT_W = PW - MARGIN * 2 - 14;
 const TEXT_FONT = '500 25px "Cormorant Garamond",Georgia,serif', LINE = 33;
-const LINES_PER_PAGE = Math.floor((PH - MARGIN * 2 - 80) / LINE);
+const TEXT_H = 560;                    // высота области текста на странице (px)
+const TITLE_H = 60;                    // место под заголовок главы
+const ILL_W = PW - 68;                 // ширина иллюстрации на странице
+const REVEAL_SEC = 5.5, REVEAL_DELAY = .5;   // «раскрашивание»: длительность и задержка после открытия страницы
 
 /* ---------- пути к ресурсам (замените файлы — код менять не нужно) ---------- */
 const AUDIO_SRC = {
@@ -77,6 +80,11 @@ const paintSound = () => { soundBtn.textContent = Sound.on ? '🔊 Звук: В�
 soundBtn.onclick = () => { Sound.toggle(); paintSound(); };
 paintSound();
 ['pointerdown', 'keydown'].forEach(ev => addEventListener(ev, () => Sound.startAmbient(), { once: true }));
+
+/* Шрифты для canvas грузятся лениво — запрашиваем заранее, иначе разбивка текста на страницы посчитается по запасному шрифту */
+if (document.fonts && document.fonts.load) {
+  Promise.all(['500 25px "Cormorant Garamond"', 'italic 500 22px "Cormorant Garamond"', '700 34px "Cormorant SC"', '600 40px "Cormorant SC"'].map(f => document.fonts.load(f, 'Аб'))).catch(() => {}).then(() => { storyCache.length = 0; });
+}
 
 /* ---------- фон: если файл видео/gif не найден — элемент удаляется ---------- */
 document.getElementById('bg').addEventListener('error', e => { const t = e.target; (t.tagName === 'SOURCE' ? t.parentNode : t).remove(); }, true);
@@ -212,8 +220,12 @@ function buildBook(n) {                                 // n = 1..7 — уник
    СОДЕРЖИМОЕ СТРАНИЦ (данные берутся из BOOKS в books-data.js)
    ===================================================================== */
 const MEASURE = mk(8, 8).getContext('2d'), imgCache = {}, storyCache = [];
-function makeImage(src) {
-  const im = new Image(); if (/^https?:/i.test(src)) im.crossOrigin = 'anonymous'; im.src = src; return im;
+function loadImage(src, cb) {                           // загрузка картинки с кэшем; cb вызывается, когда она готова
+  let im = imgCache[src];
+  if (!im) { im = imgCache[src] = new Image(); if (/^https?:/i.test(src)) im.crossOrigin = 'anonymous'; im.src = src; }
+  const ok = im.complete && im.naturalWidth > 0;
+  if (!ok && cb) im.addEventListener('load', cb, { once: true });
+  return ok ? im : null;
 }
 function wrap(ctx, text, w) {                           // перенос строк по ширине листа
   ctx.font = TEXT_FONT; const out = [];
@@ -228,25 +240,103 @@ function wrap(ctx, text, w) {                           // перенос стр
   }
   return out;
 }
-function paginate(story, hasTitle) {                    // длинный текст → массив страниц
-  const lines = wrap(MEASURE, story, TEXT_W), pages = []; let i = 0;
-  while (i < lines.length) {
-    const cap = LINES_PER_PAGE - (pages.length === 0 && hasTitle ? 2 : 0), chunk = lines.slice(i, i + cap); i += cap;
-    while (chunk.length && chunk[0] === '') chunk.shift();
-    pages.push({ lines: chunk });
+const illH = ill => Math.round(ILL_W / (ill.aspect || 1.78));
+/* Главы → список страниц. Первая страница главы: заголовок + иллюстрация + начало текста,
+   остальной текст автоматически идёт на следующие страницы. */
+function buildPages(b) {
+  const chapters = b.chapters || (b.story ? [{ title: b.title, text: b.story }] : []), pages = [];
+  for (const ch of chapters) {
+    const lines = wrap(MEASURE, ch.text || '', TEXT_W); let i = 0, first = true;
+    do {
+      const pg = { lines: [] }; let used = 0;
+      if (first) {
+        if (ch.title) { pg.title = ch.title; used += TITLE_H; }
+        if (ch.illustration) { pg.ill = ch.illustration; used += illH(ch.illustration) + 18; if (ch.illustration.caption) used += 36; }
+      }
+      const cap = Math.max(0, Math.floor((TEXT_H - used) / LINE)); pg.lines = lines.slice(i, i + cap); i += cap;
+      while (pg.lines.length && pg.lines[0] === '') pg.lines.shift();
+      pages.push(pg); first = false;
+    } while (i < lines.length);
   }
   return pages;
 }
 function getPage(bi, s) {                               // содержимое стороны s книги bi (бесконечно)
   const b = BOOKS[bi] || {};
-  if (!storyCache[bi]) storyCache[bi] = b.story ? paginate(b.story, !!b.title) : [];
+  if (!storyCache[bi]) storyCache[bi] = buildPages(b);
   const sp = storyCache[bi], manual = b.pages || [], total = Math.max(sp.length, manual.length);
   if (b.loop && total) s %= total;                      // цикл: после последней страницы — снова первая
   let c = manual[s];
-  if (c == null || c === '') { c = sp[s]; if (c && s === 0 && b.title) c = { ...c, title: b.title }; }
+  if (c == null || c === '') c = sp[s];
   if (typeof c === 'string') c = { text: c };
+  if (c && c.img && !c.ill) c = { ...c, ill: { sketch: c.img, aspect: c.aspect || 1.5, caption: c.caption } };   // старый формат img
   return c || null;                                     // null → чистый пергамент
 }
+
+/* ---------- иллюстрация: карандашный набросок → «раскрашивается» в цветную ----------
+   Для каждой пары картинок один раз строится карта «времени закраски» (слева направо + пятнистый шум),
+   затем кадр за кадром набросок плавно замещается цветной версией. Прогресс p: 0 = набросок, 1 = цвет. */
+const reveals = {};
+function getReveal(ill, w, h) {
+  const key = ill.sketch + '|' + ill.color; if (reveals[key]) return reveals[key];
+  const sk = loadImage(ill.sketch), co = loadImage(ill.color); if (!sk || !co) return null;
+  const grab = im => { const c = mk(w, h), cx = c.getContext('2d'); cx.drawImage(im, 0, 0, w, h); return cx.getImageData(0, 0, w, h).data; };
+  const A = grab(sk), Bc = grab(co), T = new Float32Array(w * h);
+  const grid = (gw, gh) => { const g = new Float32Array((gw + 1) * (gh + 1)).map(Math.random); return (u, v) => {     // сглаженный шум
+    const x = u * gw, y = v * gh, i = Math.floor(x), j = Math.floor(y), fx = x - i, fy = y - j, W1 = gw + 1;
+    const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy), a = g[j * W1 + i], b = g[j * W1 + i + 1], c = g[(j + 1) * W1 + i], d = g[(j + 1) * W1 + i + 1];
+    return (a + (b - a) * sx) * (1 - sy) + (c + (d - c) * sx) * sy; }; };
+  const n1 = grid(7, 4), n2 = grid(22, 12);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const u = x / (w - 1), v = y / (h - 1);
+    T[y * w + x] = .5 * u + .08 * v + .27 * n1(u, v) + .15 * n2(u, v);       // порядок закраски
+  }
+  let mn = 1e9, mx = -1e9; for (const t of T) { if (t < mn) mn = t; if (t > mx) mx = t; }
+  for (let i = 0; i < T.length; i++) T[i] = (T[i] - mn) / (mx - mn);
+  const out = mk(w, h), ox = out.getContext('2d'), img = ox.createImageData(w, h);
+  const R = { p: 0, w, h, out, tween: null, key,
+    compose(p) {
+      const d = img.data, soft = .22, edge = p * (1 + soft);
+      for (let i = 0, k = 0; i < T.length; i++, k += 4) {
+        let a = (edge - T[i]) / soft; a = a < 0 ? 0 : a > 1 ? 1 : a * a * (3 - 2 * a);
+        d[k] = A[k] + (Bc[k] - A[k]) * a; d[k+1] = A[k+1] + (Bc[k+1] - A[k+1]) * a; d[k+2] = A[k+2] + (Bc[k+2] - A[k+2]) * a; d[k+3] = 255;
+      }
+      ox.putImageData(img, 0, 0);
+    } };
+  R.compose(0); return reveals[key] = R;
+}
+function drawIllustration(x, ill, f, bi, s, y) {        // рисует иллюстрацию на странице, возвращает новый y
+  const w = ILL_W, h = illH(ill), dx = (PW - w) / 2;
+  if (!LOCAL_FILE) {
+    const redo = () => { if (f.s === s) renderFace(f, bi, s); };
+    const sk = loadImage(ill.sketch, redo); if (ill.color) loadImage(ill.color, redo);
+    const R = ill.color ? getReveal(ill, w, h) : null;
+    if (R) x.drawImage(R.out, dx, y);
+    else if (sk) x.drawImage(sk, dx, y, w, h);
+    x.save(); x.globalCompositeOperation = 'multiply'; x.globalAlpha = .3; x.drawImage(PARCH, dx, y, w, h, dx, y, w, h); x.restore();   // «пергаментный» тон поверх
+    x.strokeStyle = 'rgba(50,30,10,.45)'; x.lineWidth = 1.5; x.strokeRect(dx, y, w, h);
+  }
+  y += h + 18;
+  if (ill.caption) { x.font = 'italic 500 22px "Cormorant Garamond",Georgia,serif'; x.textAlign = 'center'; x.fillStyle = '#2b1a0c'; x.fillText(ill.caption, PW / 2, y); y += 36; }
+  return y;
+}
+/* Запуск раскрашивания для страниц, которые сейчас видны (вызывается после открытия книги и перелистывания) */
+function revealVisible(u) {
+  if (u.state !== 'reading') return;
+  const sides = [2 * u.p]; if (u.p > 0) sides.push(2 * u.p - 1);
+  sides.forEach(s => {
+    const c = getPage(u.id - 1, s), ill = c && c.ill; if (!ill || !ill.color || LOCAL_FILE) return;
+    const R = getReveal(ill, ILL_W, illH(ill)); if (!R || R.p >= 1 || R.tween) return;
+    const st = { p: R.p };
+    R.tween = gsap.to(st, { p: 1, duration: REVEAL_SEC, delay: REVEAL_DELAY, ease: 'power1.inOut',
+      onUpdate: () => { R.p = st.p; R.compose(R.p); refreshIll(u, ill); },
+      onComplete: () => { R.p = 1; R.compose(1); R.tween = null; refreshIll(u, ill); } });
+  });
+}
+function refreshIll(u, ill) {                           // перерисовать грани листов, на которых эта иллюстрация
+  u.leaves.forEach(L => L.faces.forEach(f => { const c = f.s >= 0 && getPage(u.id - 1, f.s); if (c && c.ill && c.ill.sketch === ill.sketch) renderFace(f, u.id - 1, f.s); }));
+}
+function resetReveals() { for (const k in reveals) { const R = reveals[k]; if (R.tween) R.tween.kill(); R.tween = null; R.p = 0; R.compose(0); } }
+
 /* Грань листа: canvas → CanvasTexture. Текст рисуется прямо на текстуре пергамента. */
 function makeFace(isRight) {
   const c = mk(PW, PH), t = tex(c);
@@ -262,14 +352,7 @@ function renderFace(f, bi, s) {
   x.fillStyle = '#2b1a0c'; x.textBaseline = 'top';
   if (c0) {
     if (c0.title) { x.font = '700 34px "Cormorant SC",Georgia,serif'; x.textAlign = 'center'; x.fillText(c0.title, ox + TEXT_W / 2, y); y += 60; }
-    if (c0.img && !LOCAL_FILE) {                        // иллюстрация (assets/images/illustrations/...)
-      const im = imgCache[c0.img] || (imgCache[c0.img] = makeImage(c0.img));
-      if (im.complete && im.naturalWidth) {
-        const r = Math.min(TEXT_W / im.naturalWidth, 340 / im.naturalHeight), iw = im.naturalWidth * r, ih = im.naturalHeight * r;
-        x.globalAlpha = .9; x.drawImage(im, ox + (TEXT_W - iw) / 2, y, iw, ih); x.globalAlpha = 1; y += ih + 14;
-      } else if (!im.complete) im.addEventListener('load', () => { if (f.s === s) renderFace(f, bi, s); }, { once: true });
-      if (c0.caption) { x.font = 'italic 500 22px "Cormorant Garamond",Georgia,serif'; x.textAlign = 'center'; x.fillText(c0.caption, ox + TEXT_W / 2, y); y += 40; }
-    }
+    if (c0.ill) y = drawIllustration(x, c0.ill, f, bi, s, y);   // иллюстрация главы (набросок → цвет)
     const lines = c0.lines || (c0.text ? wrap(x, c0.text, TEXT_W) : []);
     x.font = TEXT_FONT; x.textAlign = 'left';
     for (const ln of lines) { x.fillText(ln, ox, y); y += LINE; }
@@ -290,7 +373,7 @@ function makeLeaf(bi, v) {                              // v — виртуал�
   const mf = new THREE.MeshStandardMaterial({ map: ff.t, roughness: .95, side: THREE.FrontSide });
   const mb = new THREE.MeshStandardMaterial({ map: fb.t, roughness: .95, side: THREE.BackSide });
   const grp = new THREE.Group(); grp.add(new THREE.Mesh(geo, mf), new THREE.Mesh(geo, mb));
-  return { v, geo, grp, theta: 0, zR: 0, zL: 0, fresh: true, mats: [mf, mb] };
+  return { v, geo, grp, theta: 0, zR: 0, zL: 0, fresh: true, mats: [mf, mb], faces: [ff, fb] };
 }
 function updateLeaf(L) {
   const pos = L.geo.attributes.position, th = L.theta, bend = BEND * Math.sin(th), du = LW / SEG;
@@ -432,7 +515,7 @@ function openBook() {                                   // обложка отк
   Sound.startAmbient(); Sound.ambientLevel(.5); Sound.play('open');     // 🔊 эмбиент усиливается при чтении
   u.p = 0; u.anim = 0; for (let v = 0; v < RS; v++) addLeaf(u, v, 0); restack(u, false);
   const o = { t: 0 }, T = 1.4, e = 'power2.inOut';
-  gsap.timeline({ onComplete: () => { u.state = 'reading'; ui(); } })
+  gsap.timeline({ onComplete: () => { u.state = 'reading'; ui(); revealVisible(u); } })
     .to(o, { t: 1, duration: 1.2, ease: e, onUpdate: slerpTo(b, readQ, o) }, 0)
     .to(b.position, { x: S.cx, y: 0, z: 0, duration: 1.2, ease: e }, 0)
     .to(b.scale, { x: S.readScale, y: S.readScale, z: S.readScale, duration: 1.2, ease: e }, 0)
@@ -451,16 +534,16 @@ function flip(dir) {                                    // бесконечно�
   const L = u.leaves.get(dir > 0 ? u.p : u.p - 1); if (!L) return;
   Sound.play('flip');                                   // 🔊 звук перелистывания
   u.p += dir; u.anim++; ui();
-  gsap.to(L, { theta: dir > 0 ? Math.PI : 0, duration: 1.15, ease: 'power2.inOut', onUpdate: () => updateLeaf(L), onComplete: () => u.anim-- });
+  gsap.to(L, { theta: dir > 0 ? Math.PI : 0, duration: 1.15, ease: 'power2.inOut', onUpdate: () => updateLeaf(L), onComplete: () => { u.anim--; revealVisible(u); } });
   removeLeaf(u, dir > 0 ? u.p - 1 - LS : u.p + RS);     // лишний лист убираем, новый (с новыми страницами) добавляем
   const add = dir > 0 ? u.p + RS - 1 : u.p - LS; if (add >= 0) addLeaf(u, add, dir > 0 ? 0 : Math.PI);
   restack(u, true);
 }
 function closeBook(done) {
   const b = S.cur; if (!b || b.userData.state !== 'reading') return;
-  const u = b.userData; u.state = 'closing'; u.anim = 0; ui(); Sound.play('open');
+  const u = b.userData; u.state = 'closing'; u.anim = 0; ui(); Sound.play('open'); resetReveals();
   const o = { t: 0 }, e = 'power2.inOut', T = 1.2, tl = gsap.timeline({ onComplete: () => {
-    [...u.leaves.keys()].forEach(v => removeLeaf(u, v)); u.p = 0; u.state = 'center'; ui(); done && done(); } });
+    [...u.leaves.keys()].forEach(v => removeLeaf(u, v)); resetReveals(); u.p = 0; u.state = 'center'; ui(); done && done(); } });
   const left = [...u.leaves.values()].filter(L => L.v < u.p).sort((a, c) => c.v - a.v);   // левую стопку возвращаем вправо
   left.forEach((L, k) => tl.to(L, { theta: 0, duration: .6, ease: e, overwrite: 'auto', onUpdate: () => updateLeaf(L) }, k * .12));
   const t0 = left.length ? .6 + (left.length - 1) * .12 + .1 : 0;

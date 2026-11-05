@@ -6,16 +6,16 @@
 <title>Книги Древних</title>
 <!-- Шрифты с кириллицей. Для работы офлайн положите .woff2 в assets/fonts/ и подключите через @font-face в css/style.css -->
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;700&family=Cormorant+SC:wght@600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/style.css?v=4">
+<link rel="stylesheet" href="css/style.css?v=5">
 </head>
 <body>
 
 <!-- ФОНОВЫЙ ЗАДНИК: бесшовно зацикленное видео (loop). Чтобы заменить — подставьте свой файл под именем
      assets/images/bg.mp4 (или поменяйте src). Видео без звука (muted), иначе браузер не даст ему автозапуск.
-     Если файл не найден, слой скрывается автоматически (см. main.js). ?v=1 — сброс кэша при замене файла. -->
+     Если файл не найден, слой скрывается автоматически (см. main.js). ?v=2 — сброс кэша при замене файла. -->
 <div id="bg" aria-hidden="true">
   <video autoplay muted loop playsinline preload="auto">
-    <source src="assets/images/bg.mp4?v=1" type="video/mp4">
+    <source src="assets/images/bg.mp4?v=2" type="video/mp4">
   </video>
 </div>
 
@@ -44,7 +44,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 <!-- Порядок важен: сначала данные (BOOKS), затем логика -->
-<script src="js/books-data.js?v=4"></script>
-<script src="js/main.js?v=4"></script>
+<script src="js/books-data.js?v=5"></script>
+<script src="js/main.js?v=5"></script>
 </body>
 </html>
