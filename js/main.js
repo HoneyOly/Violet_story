@@ -246,6 +246,7 @@ const illH = ill => Math.round(ILL_W / (ill.aspect || 1.78));
 function buildPages(b) {
   const chapters = b.chapters || (b.story ? [{ title: b.title, text: b.story }] : []), pages = [];
   for (const ch of chapters) {
+    if (pages.length % 2 === 1 && ch.startOnRight !== false) pages.push({ lines: [] });   // глава начинается с правой страницы (startOnRight:false — отключить)
     const lines = wrap(MEASURE, ch.text || '', TEXT_W); let i = 0, first = true;
     do {
       const pg = { lines: [] }; let used = 0;
