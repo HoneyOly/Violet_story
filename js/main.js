@@ -321,7 +321,17 @@ function restack(u, tween) {                            // высоты стоп
    ПОЛКА И РАСКЛАДКА
    ===================================================================== */
 const shelfEl = document.getElementById('shelf'), books = [];
-for (let n = 1; n <= BOOK_COUNT; n++) { const d = document.createElement('div'); d.className = 'slot'; d.innerHTML = `<span>Книга ${n}</span>`; shelfEl.appendChild(d); }
+/* Каждый слот — кликабельная кнопка на ВСЮ рамку (углы, середина, подпись). Выбор книги идёт по
+   номеру слота, а не по попаданию луча в 3D-модель, поэтому клик всегда достаёт именно эту книгу. */
+for (let n = 1; n <= BOOK_COUNT; n++) {
+  const d = document.createElement('div');
+  d.className = 'slot'; d.dataset.n = n; d.setAttribute('role', 'button'); d.tabIndex = 0;
+  d.innerHTML = `<span>Книга ${n}</span>`; shelfEl.appendChild(d);
+  d.addEventListener('click', () => onSlot(n - 1));
+  d.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSlot(n - 1); } });
+  d.addEventListener('pointerenter', () => hoverSlot(n - 1, true));
+  d.addEventListener('pointerleave', () => hoverSlot(n - 1, false));
+}
 const slotEls = [...shelfEl.children];
 const S = { cur: null, closedScale: 1, readScale: 1, cx: 0 };
 const shelfQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.05, 0.55, 0));
@@ -382,9 +392,14 @@ const $ = id => document.getElementById(id), hint = $('hint');
 function ui() {
   const st = S.cur ? S.cur.userData.state : 'shelf';
   $('gCenter').classList.toggle('on', st === 'center'); $('gRead').classList.toggle('on', st === 'reading');
+  slotEls.forEach((el, k) => {                          // слот выехавшей книги подсвечен; клик по нему вернёт книгу
+    const out = books[k] === S.cur; el.classList.toggle('out', out);
+    el.setAttribute('aria-label', out ? `Вернуть книгу ${k + 1} на полку` : `Достать книгу ${k + 1}`);
+    el.title = out ? 'Нажмите, чтобы вернуть книгу на полку' : '';
+  });
   hint.textContent = LOCAL_FILE && st === 'shelf' ? 'Запустите через локальный сервер, чтобы работали картинки в книгах'
-    : { shelf: 'Выберите книгу на полке справа', center: 'Вращайте книгу мышью. Клик по книге — открыть',
-        reading: 'Клик справа — вперёд, слева — назад (или стрелки ← →)' }[st] || '';
+    : { shelf: 'Нажмите на любой слот справа, чтобы достать книгу', center: 'Вращайте книгу мышью. Клик по книге — открыть, клик по её слоту — вернуть',
+        reading: 'Клик справа — вперёд, слева — назад (или стрелки ← →). Слот книги — вернуть на полку' }[st] || '';
   if (S.cur && st === 'reading') { const p = S.cur.userData.p; $('pg').textContent = p === 0 ? 'Стр. 1' : `Стр. ${2 * p}–${2 * p + 1}`; $('bPrev').disabled = p === 0; }
 }
 
@@ -394,7 +409,7 @@ function ui() {
 const slerpTo = (b, q, o) => { const q0 = b.quaternion.clone(); return () => b.quaternion.slerpQuaternions(q0, q, o.t); };
 function toCenter(b) {                                  // выезд ИМЕННО выбранной книги из её слота
   if (S.cur || b.userData.state !== 'shelf') return;
-  S.cur = b; const u = b.userData; u.state = 'moving'; ui();
+  S.cur = b; const u = b.userData; u.state = 'moving'; ui(); gsap.killTweensOf(b.scale);
   Sound.play('open');                                   // 🔊 звук выезда книги
   const o = { t: 0 };
   gsap.timeline({ onComplete: () => { u.state = 'center'; ui(); } })
@@ -457,7 +472,26 @@ function closeBook(done) {
     .to(b.scale, { x: S.closedScale, y: S.closedScale, z: S.closedScale, duration: T, ease: e }, t0)
     .to(o, { t: 1, duration: T, ease: e, onUpdate: slerpTo(b, centerQ, o) }, t0);
 }
-const backToShelf = () => { const b = S.cur; if (!b) return; b.userData.state === 'reading' ? closeBook(() => toShelf(b)) : toShelf(b); };
+/* then — необязательная функция, которая выполнится, когда книга окажется на полке (клик на события не передаётся) */
+const backToShelf = then => {
+  const b = S.cur; if (!b) return; const fin = typeof then === 'function' ? then : undefined;
+  b.userData.state === 'reading' ? closeBook(() => toShelf(b, fin)) : toShelf(b, fin);
+};
+/* Клик по слоту k:
+   • на столе нет книги        → книга k выезжает;
+   • клик по слоту ЭТОЙ книги   → она возвращается на полку (если открыта — сначала закрывается);
+   • клик по слоту другой книги → текущая уезжает на полку, затем выезжает выбранная. */
+function onSlot(k) {
+  const b = books[k], cur = S.cur;
+  if (!cur) return toCenter(b);
+  const st = cur.userData.state; if (st !== 'center' && st !== 'reading') return;      // идёт анимация — игнорируем
+  if (cur === b) backToShelf(); else backToShelf(() => toCenter(b));
+}
+function hoverSlot(k, on) {                             // лёгкий отклик: книга на полке чуть увеличивается под курсором
+  const b = books[k]; if (!b || b.userData.state !== 'shelf') return;
+  const s = b.userData.shelf.s * (on ? 1.1 : 1);
+  gsap.to(b.scale, { x: s, y: s, z: s, duration: .2, overwrite: true });
+}
 
 $('bOpen').onclick = openBook; $('bClose').onclick = () => closeBook();
 $('bBack1').onclick = $('bBack2').onclick = backToShelf;
@@ -471,7 +505,8 @@ addEventListener('keydown', e => {
    ===================================================================== */
 const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(); let drag = null;
 function pick(e) {                                      // какая именно книга под курсором
-  mouse.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(mouse, camera);
+  const cr = canvas.getBoundingClientRect();            // тот же прямоугольник, по которому раскладывается полка
+  mouse.set((e.clientX - cr.left) / cr.width * 2 - 1, -((e.clientY - cr.top) / cr.height) * 2 + 1); ray.setFromCamera(mouse, camera);
   const hit = ray.intersectObjects(books, true)[0]; if (!hit) return null;
   let o = hit.object; while (o && !o.userData.isBook) o = o.parent; return o;
 }
@@ -483,14 +518,14 @@ canvas.addEventListener('pointermove', e => {
   if (drag) {
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY; drag.moved += Math.abs(dx) + Math.abs(dy);
     if (st === 'center') { vel.set(dx * .008, dy * .008); rotateBy(vel.x, vel.y); }   // вращение на 360° по всем осям
-  } else { const h = pick(e); canvas.style.cursor = h && ((!S.cur && h.userData.state === 'shelf') || (h === S.cur && st === 'center')) ? 'pointer' : 'default'; }
+  } else { const h = pick(e); canvas.style.cursor = h && h === S.cur && st === 'center' ? 'pointer' : 'default'; }
 });
 canvas.addEventListener('pointerup', e => {
   if (!drag) return; const d = drag; drag = null; if (d.moved > 6) return;
   const st = S.cur && S.cur.userData.state;
-  if (!S.cur) { if (d.hit && d.hit.userData.state === 'shelf') toCenter(d.hit); }   // выезжает книга, по которой кликнули
-  else if (st === 'center' && d.hit === S.cur) openBook();
-  else if (st === 'reading') flip(e.clientX > (innerWidth - shelfEl.offsetWidth) / 2 ? 1 : -1);
+  if (!S.cur) return;                                                                 // с полки книги достаются кликом по слоту (onSlot)
+  if (st === 'center' && d.hit === S.cur) openBook();
+  else if (st === 'reading') { const cr = canvas.getBoundingClientRect(); flip(e.clientX > cr.left + (cr.width - shelfEl.offsetWidth) / 2 ? 1 : -1); }
 });
 (function loop() {
   requestAnimationFrame(loop);

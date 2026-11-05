@@ -39,7 +39,11 @@ canvas#gl { position: fixed; inset: 0; z-index: 1; width: 100%; height: 100%; di
   flex: 1; min-height: 0; position: relative;
   border: 1px solid rgba(201,164,92,.22); background: rgba(0,0,0,.28);
   box-shadow: inset 0 0 18px rgba(0,0,0,.7);
+  pointer-events: auto; cursor: pointer;               /* вся рамка слота — зона клика */
+  transition: border-color .2s, background .2s;
 }
+.slot:hover, .slot:focus-visible { border-color: rgba(201,164,92,.6); background: rgba(201,164,92,.06); outline: none; }
+.slot.out { border: 1px dashed rgba(201,164,92,.55); }  /* книга сейчас на столе: клик по слоту вернёт её */
 /* Подпись занимает нижнюю полосу слота; книга центрируется в оставшемся месте над ней */
 .slot span {
   position: absolute; left: 0; right: 0; bottom: 0; height: var(--label-h);
