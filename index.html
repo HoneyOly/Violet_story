@@ -6,16 +6,17 @@
 <title>Книги Древних</title>
 <!-- Шрифты с кириллицей. Для работы офлайн положите .woff2 в assets/fonts/ и подключите через @font-face в css/style.css -->
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;700&family=Cormorant+SC:wght@600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/style.css?v=6">
+<link rel="stylesheet" href="css/style.css?v=8">
 </head>
 <body>
 
-<!-- ФОНОВЫЙ ЗАДНИК: бесшовно зацикленное видео (loop). Чтобы заменить — подставьте свой файл под именем
-     assets/images/bg.mp4 (или поменяйте src). Видео без звука (muted), иначе браузер не даст ему автозапуск.
-     Если файл не найден, слой скрывается автоматически (см. main.js). ?v=2 — сброс кэша при замене файла. -->
+<!-- ФОНОВЫЙ ЗАДНИК: видео на весь экран (object-fit: cover — заполняет экран, края при необходимости обрезаются).
+     Чтобы заменить — подставьте свой файл под именем assets/images/bg.mp4 (или поменяйте src).
+     Видео без звука (muted), иначе браузер не даст ему автозапуск. Нет файла — слой скрывается (main.js).
+     ?v=6 — сброс кэша при замене файла. -->
 <div id="bg" aria-hidden="true">
   <video autoplay muted loop playsinline preload="auto">
-    <source src="assets/images/bg.mp4?v=2" type="video/mp4">
+    <source src="assets/images/bg.mp4?v=6" type="video/mp4">
   </video>
 </div>
 
